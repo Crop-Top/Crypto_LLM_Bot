@@ -31,16 +31,14 @@ class BacktestEngine:
         initial_capital: float = 10_000.0,
         slippage: float = 0.0005,
         risk_pct: float = 0.01,
-        reward_ratio: float = 2.5,
-        position_pct: float = 0.20,
+        account_pct: float = 0.10,
         leverage: float = 5.0,
     ):
         self.strategy = strategy
         self.initial_capital = initial_capital
         self.slippage = slippage
         self.risk_pct = risk_pct
-        self.reward_ratio = reward_ratio
-        self.position_pct = position_pct
+        self.account_pct = account_pct
         self.leverage = leverage
 
     def run(
@@ -71,13 +69,13 @@ class BacktestEngine:
         raw_probs = self.strategy.predictor.model.predict_proba(X_all_scaled)
         raw_conf = raw_probs.max(axis=1)
         label_map = self.strategy.predictor._label_map
-        conf_thresh = self.strategy.confidence_threshold
 
         capital = self.initial_capital
         position: float = 0.0
         entry_price: float = 0.0
         entry_sl: float = 0.0
         entry_tp: float = 0.0
+        entry_confidence: float = 0.0
         locked_margin: float = 0.0
         trades: list[Trade] = []
         equity_curve: list[float] = []
@@ -94,7 +92,7 @@ class BacktestEngine:
             pred_class = int(raw_preds[idx])
             confidence = float(raw_conf[idx])
             signal_str = label_map.get(pred_class, "Hold")
-            signal = Signal(signal_str) if confidence >= conf_thresh else Signal.HOLD
+            signal = Signal(signal_str) if confidence >= 0.50 else Signal.HOLD
             signals.append(signal)
             if signal == Signal.BUY: sig_buy += 1
             elif signal == Signal.SELL: sig_sell += 1
@@ -120,7 +118,7 @@ class BacktestEngine:
                 elif h >= entry_tp:
                     exit_px = entry_tp * (1 - self.slippage)
                     exit_reason = "take_profit"
-                elif signal == Signal.SELL:
+                elif signal == Signal.SELL and confidence > entry_confidence:
                     exit_px = c * (1 - self.slippage)
                     exit_reason = "signal"
                 if exit_reason:
@@ -138,6 +136,7 @@ class BacktestEngine:
                     trades[-1].exit_reason = exit_reason
                     position = 0.0
                     entry_price = entry_sl = entry_tp = 0.0
+                    entry_confidence = 0.0
                     locked_margin = 0.0
 
             elif position < 0:  # Short
@@ -149,7 +148,7 @@ class BacktestEngine:
                 elif l <= entry_tp:
                     exit_px = entry_tp * (1 + self.slippage)
                     exit_reason = "take_profit"
-                elif signal == Signal.BUY:
+                elif signal == Signal.BUY and confidence > entry_confidence:
                     exit_px = c * (1 + self.slippage)
                     exit_reason = "signal"
                 if exit_reason:
@@ -168,12 +167,19 @@ class BacktestEngine:
                     trades[-1].exit_reason = exit_reason
                     position = 0.0
                     entry_price = entry_sl = entry_tp = 0.0
+                    entry_confidence = 0.0
                     locked_margin = 0.0
 
             # --- ENTRY ---
             if position == 0:
                 if signal == Signal.BUY and trend_up:
-                    margin = capital * self.position_pct
+                    if confidence >= 0.60:
+                        rr = 2.5
+                    elif confidence >= 0.55:
+                        rr = 2.0
+                    else:
+                        rr = 1.5
+                    margin = capital * self.account_pct
                     pos_value = margin * self.leverage
                     exec_px = c * (1 + self.slippage)
                     qty = pos_value / exec_px
@@ -183,8 +189,9 @@ class BacktestEngine:
                         locked_margin = margin
                         position = qty
                         entry_price = exec_px
+                        entry_confidence = confidence
                         entry_sl = exec_px * (1 - self.risk_pct)
-                        entry_tp = exec_px * (1 + self.risk_pct * self.reward_ratio)
+                        entry_tp = exec_px * (1 + self.risk_pct * rr)
                         trade_id += 1
                         trades.append(Trade(
                             id=f"bt_{trade_id}", symbol="", side=OrderSide.BUY,
@@ -193,7 +200,13 @@ class BacktestEngine:
                             entry_reason="signal_buy",
                         ))
                 elif signal == Signal.SELL and trend_down:
-                    margin = capital * self.position_pct
+                    if confidence >= 0.60:
+                        rr = 2.5
+                    elif confidence >= 0.55:
+                        rr = 2.0
+                    else:
+                        rr = 1.5
+                    margin = capital * self.account_pct
                     pos_value = margin * self.leverage
                     exec_px = c * (1 - self.slippage)
                     qty = pos_value / exec_px
@@ -203,8 +216,9 @@ class BacktestEngine:
                         locked_margin = margin
                         position = -qty
                         entry_price = exec_px
+                        entry_confidence = confidence
                         entry_sl = exec_px * (1 + self.risk_pct)
-                        entry_tp = exec_px * (1 - self.risk_pct * self.reward_ratio)
+                        entry_tp = exec_px * (1 - self.risk_pct * rr)
                         trade_id += 1
                         trades.append(Trade(
                             id=f"bt_{trade_id}", symbol="", side=OrderSide.SELL,

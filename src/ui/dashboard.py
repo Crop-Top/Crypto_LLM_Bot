@@ -68,9 +68,8 @@ def render_sidebar() -> str:
             ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
             index=["1m", "5m", "15m", "30m", "1h", "4h", "1d"].index(settings.timeframe),
         )
-        pos_size = st.number_input("Position Size (USDT)", min_value=10.0, value=settings.position_size_usdt, step=10.0)
+        account_pct = st.slider("Account % Per Trade", 1, 50, 10, 1, help="Position value = account balance × this %")
         leverage = st.number_input("Leverage", min_value=1, max_value=125, value=settings.leverage)
-        confidence = st.slider("Signal Confidence Threshold", 0.5, 0.95, 0.55, 0.05)
 
         use_htf = st.checkbox("Multi-Timeframe Filter", value=False, help="Use higher timeframe trend to filter trade direction")
         htf_timeframe = "4h"
@@ -83,9 +82,8 @@ def render_sidebar() -> str:
 
         st.session_state["ui_symbol"] = symbol
         st.session_state["ui_timeframe"] = timeframe
-        st.session_state["ui_pos_size"] = pos_size
+        st.session_state["ui_account_pct"] = account_pct
         st.session_state["ui_leverage"] = leverage
-        st.session_state["ui_confidence"] = confidence
         st.session_state["ui_use_htf"] = use_htf
         st.session_state["ui_htf_tf"] = htf_timeframe
 
@@ -101,7 +99,7 @@ def render_sidebar() -> str:
         htf_info = f" + {st.session_state.get('ui_htf_tf', '4h')} trend filter" if st.session_state.get("ui_use_htf", False) else ""
         st.markdown(
             f"**ML Scalper** on **{tf}**{htf_info}\n\n"
-            f"RandomForest → binary Buy/Sell → 2.5:1 RR scalping with SL/TP exits\n\n"
+            f"RandomForest → binary Buy/Sell → dynamic RR (2:1–3:1) based on confidence\n\n"
             f"33 features: RSI, MACD, BB, ATR, volume, OI, funding rate"
         )
 
@@ -124,13 +122,11 @@ def render_sidebar() -> str:
 def render_backtest() -> None:
     st.header("Backtest Strategy")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         days = st.number_input("Days of historical data", min_value=7, max_value=1825, value=60, step=30)
     with col2:
         initial_capital = st.number_input("Initial Capital (USDT)", min_value=100.0, value=10_000.0, step=500.0)
-    with col3:
-        confidence = st.slider("Confidence Threshold", 0.50, 0.95, 0.55, 0.05, key="bt_conf")
 
     use_htf = st.session_state.get("ui_use_htf", False)
     htf_tf = st.session_state.get("ui_htf_tf", "4h")
@@ -157,10 +153,11 @@ def render_backtest() -> None:
 
                 predictor = TradePredictor()
                 predictor.train(data)
-                strategy = MLStrategy(predictor, confidence_threshold=confidence)
+                strategy = MLStrategy(predictor)
                 engine = BacktestEngine(
                     strategy,
                     initial_capital=float(initial_capital),
+                    account_pct=float(st.session_state.get("ui_account_pct", 10)) / 100.0,
                     leverage=float(st.session_state.get("ui_leverage", 5)),
                 )
                 result = engine.run(data, htf_data=htf_data)
@@ -296,7 +293,7 @@ def render_backtest() -> None:
                 {
                     "Entry": t.entry_time.strftime("%m/%d %H:%M"),
                     "Exit": t.exit_time.strftime("%m/%d %H:%M") if t.exit_time else "",
-                    "Side": t.side.value,
+                    "Pos Size $": round(t.quantity * t.entry_price, 2),
                     "Entry $": round(t.entry_price, 1),
                     "Exit $": round(t.exit_price or 0, 1),
                     "SL $": round(t.stop_loss, 1) if t.stop_loss else "",

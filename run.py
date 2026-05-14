@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=["backtest", "demo", "live"], default="backtest", help="Operating mode")
     parser.add_argument("--days", type=int, default=60, help="Days of historical data for backtest")
     parser.add_argument("--capital", type=float, default=10_000.0, help="Initial capital for backtest/demo")
-    parser.add_argument("--confidence", type=float, default=0.55, help="Signal confidence threshold")
+
     return parser.parse_args()
 
 
@@ -41,7 +41,7 @@ def run_backtest(args: argparse.Namespace) -> None:
 
     predictor = TradePredictor()
     predictor.train(data)
-    strategy = MLStrategy(predictor, confidence_threshold=args.confidence)
+    strategy = MLStrategy(predictor)
     engine = BacktestEngine(strategy, initial_capital=args.capital)
     result = engine.run(data)
 
@@ -71,7 +71,7 @@ def run_live(args: argparse.Namespace, is_demo: bool) -> None:
     if not historical.empty:
         predictor.train(historical)
 
-    strategy = MLStrategy(predictor, confidence_threshold=args.confidence)
+    strategy = MLStrategy(predictor)
     logger.info(f"Starting {mode} loop for {settings.symbol} @ {settings.timeframe}")
 
     try:

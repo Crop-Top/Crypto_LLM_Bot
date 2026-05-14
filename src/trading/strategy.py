@@ -13,12 +13,11 @@ class BaseStrategy(ABC):
 
 
 class MLStrategy(BaseStrategy):
-    def __init__(self, predictor: TradePredictor, confidence_threshold: float = 0.55):
+    def __init__(self, predictor: TradePredictor):
         self.predictor = predictor
-        self.confidence_threshold = confidence_threshold
 
     def generate_signal(self, data: pd.DataFrame) -> Signal:
         signal_str, confidence = self.predictor.predict(data)
-        if confidence < self.confidence_threshold:
+        if confidence < 0.50:
             return Signal.HOLD
         return Signal(signal_str)
